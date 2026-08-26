@@ -1,0 +1,348 @@
+# ============================================================================
+#  FGMN Nursery — Product Feed Rules
+#  This file IS the product. Everything DataFeedWatch does through a web UI is
+#  expressed here as version-controlled, reviewable, testable configuration.
+#  Edit this; never edit the generated feeds.
+# ============================================================================
+
+store:
+  name: "FGMN Nursery"
+  brand: "FGMN Nursery"
+  url: "https://fgmnnursery.com"
+  currency: "USD"
+  country: "US"
+  languages: ["en"]
+  policies:
+    privacy: "https://fgmnnursery.com/policies/privacy-policy"
+    terms: "https://fgmnnursery.com/policies/terms-of-service"
+    refund: "https://fgmnnursery.com/policies/refund-policy"
+    shipping: "https://fgmnnursery.com/policies/shipping-policy"
+  returns:
+    accepts_returns: true
+    return_deadline_days: 30
+    accepts_exchanges: true
+
+# ---------------------------------------------------------------------------
+# 1b. SEGMENTS — named subsets of the catalog, each publishable as its own feed.
+#     A segment is applied on top of the exclusions below, never instead of them.
+#     Build one with:  python3 src/generate.py --segment beneficials
+# ---------------------------------------------------------------------------
+segments:
+  all:
+    description: "Every eligible product."
+
+  beneficials:
+    description: >
+      Live biological control organisms only — predatory mites, parasitic wasps,
+      lacewings, ladybugs, rove beetles, nematodes, springtails, and the microbial
+      soil inoculants. Excludes sticky traps, Physan, apparel, gift cards and plants.
+    # `target_pests` is the honest signal: it is populated on exactly the products
+    # that are a living control agent, and empty on traps and chemicals. The
+    # product_type fallback catches the few beneficials that predate that metafield.
+    include_any:
+      - {has_metafield: target_pests}
+      - {field: product_type, op: in, value: ["Springtails", "Mite Care", "Biological Pest Control"]}
+
+  merch:
+    description: "Apparel and branded goods."
+    include_any:
+      - {field: product_type, op: in, value: ["FGMN Originals"]}
+      - {field: tags, op: contains_any, value: ["tshirt", "Hoodie", "Mite Life", "style"]}
+
+# ---------------------------------------------------------------------------
+# 1. EXCLUSIONS — evaluated in order; first match wins. Every drop is logged
+#    with its reason, so "why isn't this product in Google?" is always answerable.
+# ---------------------------------------------------------------------------
+exclusions:
+  - id: not_active
+    reason: "Product status is not ACTIVE"
+    when: {field: status, op: not_in, value: [ACTIVE]}
+
+  - id: not_published
+    reason: "No online store URL — product is not published to the storefront"
+    when: {field: online_store_url, op: is_empty}
+
+  - id: gift_card
+    reason: "Gift cards are not eligible product data on any shopping channel"
+    when: {field: product_type, op: in, value: ["Gift Card"]}
+
+  - id: service_addon
+    reason: "Shipping protection / service add-on, not a retail product"
+    any:
+      - {field: vendor, op: in, value: ["AfterShip"]}
+      - {field: product_type, op: in, value: ["Protection"]}
+      - {field: tags, op: contains_any, value: ["aftership-protection"]}
+
+  - id: zero_price
+    reason: "Price is zero — cannot be advertised"
+    when: {field: price, op: lte, value: 0}
+
+  - id: shipping_axis_variant
+    # Several plant listings use "Shipping Options" as a variant axis. Feeding
+    # them creates near-duplicate offers that differ only by shipping method,
+    # which Google flags as duplicate content. Keep the cheapest, drop the rest.
+    reason: "Duplicate offer differing only by shipping method"
+    collapse_on_option: ["Shipping Options", "Make It A Gift Set?", "Purchase Options"]
+    keep: cheapest
+
+  - id: unavailable
+    reason: "Not available for sale"
+    when: {field: available_for_sale, op: eq, value: false}
+    channels: [google, microsoft, pinterest]   # OpenAI accepts out_of_stock items
+
+# ---------------------------------------------------------------------------
+# 2. CATEGORY MAPPING — Google Product Taxonomy.
+#    Rules are ordered; first match wins. This deliberately keeps live
+#    beneficial insects OUT of the Animals & Pet Supplies branch, which is what
+#    trips Google's live-animal transportation-safety classifier.
+# ---------------------------------------------------------------------------
+categories:
+  # All IDs verified against the Google Product Taxonomy (en-US).
+  # Deliberate choice: every biological-control SKU is mapped under
+  # "Home & Garden > Household Supplies > Pest Control", NOT under
+  # "Animals & Pet Supplies > Live Animals" (3237). Google has no live-animal
+  # ad ban, but it does restrict "the transportation of live animals" under
+  # Local legal requirements and safety standards, and that classifier keys off
+  # the Animals branch. Staying in Home & Garden removes the hook entirely.
+  default: {id: 2962, path: "Home & Garden > Lawn & Garden > Gardening"}
+  rules:
+    - match: {title_contains: ["Sticky Trap", "Horiver", "Glue Trap"]}
+      to: {id: 2631, path: "Home & Garden > Household Supplies > Pest Control > Pest Control Traps"}
+    - match: {product_type: ["Treatment", "Prevention", "Mite Care", "Springtails", "Biological Pest Control"]}
+      to: {id: 2869, path: "Home & Garden > Household Supplies > Pest Control > Pesticides"}
+    - match: {product_type: ["Soil Amendments"]}
+      to: {id: 543678, path: "Home & Garden > Lawn & Garden > Gardening > Sands & Soils > Soil"}
+    - match: {product_type: ["Plant Care"]}
+      to: {id: 691, path: "Home & Garden > Lawn & Garden > Gardening > Disease Control"}
+    - match: {product_type: ["Philodendron","Monstera","Alocasia","Syngonium","Scindapsus","Thaumatophyllum","Aglaonema","Raphidophora","Caladium","Epipremnum","Pachira"]}
+      to: {id: 543558, path: "Home & Garden > Plants > Indoor & Outdoor Plants > Potted Houseplants"}
+    - match: {tags: ["tshirt","style","Hoodie","Mite Life"]}
+      to: {id: 212, path: "Apparel & Accessories > Clothing > Shirts & Tops"}
+
+# ---------------------------------------------------------------------------
+# 3. TITLE RULES — the single biggest revenue lever in this catalog.
+#    65 of 131 titles are under 30 characters and most are bare Latin binomials
+#    ("Phytoseiulus persimilis"), which almost nobody searches for. Titles are
+#    rebuilt from: what it is + what it kills + how much you get + brand.
+#    Templates resolve in order; first one whose required fields are all
+#    non-empty wins. {var|filter} syntax; output is trimmed to the channel cap
+#    on a word boundary, never mid-word.
+# ---------------------------------------------------------------------------
+titles:
+  max_length: 150
+  # Common names carry the search volume; Latin names carry the authority.
+  # Feed both, common name first.
+  common_names:
+    "Phytoseiulus persimilis": "Persimilis Predatory Mites"
+    "Amblyseius cucumeris": "Cucumeris Predatory Mites"
+    "Amblyseius swirskii": "Swirskii Predatory Mites"
+    "Amblyseius andersoni": "Andersoni Predatory Mites"
+    "Neoseiulus californicus": "Californicus Predatory Mites"
+    "Stratiolaelaps scimitus": "Stratiolaelaps Soil Mites"
+    "Aphidius colemani": "Aphidius colemani Parasitic Wasps"
+    "Aphidius ervi": "Aphidius ervi Parasitic Wasps"
+    "Aphidoletes aphidimyza": "Aphidoletes Predatory Midges"
+    "Orius insidiosus": "Orius Minute Pirate Bugs"
+    "Diglyphus isaea": "Diglyphus Leafminer Parasitoid"
+    "Sf Nematodes": "Sf Beneficial Nematodes (Steinernema feltiae)"
+    "Sc Nematodes": "Sc Beneficial Nematodes (Steinernema carpocapsae)"
+    "Hb Nematodes": "Hb Beneficial Nematodes (Heterorhabditis bacteriophora)"
+    "Ladybugs": "Live Ladybugs (Hippodamia convergens)"
+
+  templates:
+    # --- Biological pest control: name + primary pest + count/size ---
+    - id: bio_control_with_pest
+      applies_to: {product_type: ["Treatment","Prevention","Mite Care","Springtails","Biological Pest Control"]}
+      requires: [common_name, primary_pest, variant_qualifier]
+      template: "{common_name} for {primary_pest} — {variant_qualifier} | {brand}"
+    - id: bio_control_no_pest
+      applies_to: {product_type: ["Treatment","Prevention","Mite Care","Springtails","Biological Pest Control"]}
+      requires: [common_name, variant_qualifier]
+      template: "{common_name} — {variant_qualifier} | {brand}"
+    # --- Rare plants: species + size + specimen number (each is one-of-one) ---
+    - id: specimen_plant
+      applies_to: {product_type: ["Philodendron","Monstera","Alocasia","Syngonium","Scindapsus","Thaumatophyllum","Aglaonema","Raphidophora","Caladium","Epipremnum","Pachira"]}
+      requires: [title, plant_height]
+      template: "{title} — Live Plant, {plant_height} | {brand}"
+    - id: specimen_plant_plain
+      applies_to: {product_type: ["Philodendron","Monstera","Alocasia","Syngonium","Scindapsus","Thaumatophyllum","Aglaonema","Raphidophora","Caladium","Epipremnum","Pachira"]}
+      requires: [title]
+      template: "{title} — Live Indoor Plant | {brand}"
+    # --- Fallbacks ---
+    - id: seo_title_variant
+      requires: [seo_title, variant_qualifier]
+      template: "{seo_title} — {variant_qualifier}"
+    - id: seo_title_only
+      requires: [seo_title]
+      template: "{seo_title}"
+    - id: plain
+      requires: [title]
+      template: "{title} — {variant_qualifier} | {brand}"
+
+  # Words that trip Google's live-animal / hazardous-goods classifiers.
+  # Rewritten, not just stripped, so the meaning survives.
+  banned_terms:
+    "live animals": "live beneficial insects"
+    "livestock": "beneficial insects"
+    "pesticide": "biological pest control"
+    "insecticide": "natural pest control"
+    "poison": "treatment"
+
+# ---------------------------------------------------------------------------
+# 4. DESCRIPTION RULES
+# ---------------------------------------------------------------------------
+descriptions:
+  max_length: 5000
+  source: description_html          # stripped to plain text
+  # Append structured facts the storefront shows visually but the feed loses.
+  append_fields:
+    - {when_present: target_pests,  format: "Targets: {value}."}
+    - {when_present: plant_height,  format: "Plant height: {value}."}
+    - {when_present: leaf_size,     format: "Leaf size: {value}."}
+    - {when_present: rarity_label,  format: "Rarity: {value}."}
+  fallback: "{title} from {brand}. {category_path}."
+
+# ---------------------------------------------------------------------------
+# 5. CUSTOM LABELS — Google Ads bid segmentation.
+#    These are what the campaign structure is actually built on, so they are
+#    computed, not hand-maintained.
+# ---------------------------------------------------------------------------
+custom_labels:
+  custom_label_0:   # price band
+    type: bucket
+    field: price
+    buckets:
+      - {max: 25,   label: "under-25"}
+      - {max: 50,   label: "25-50"}
+      - {max: 100,  label: "50-100"}
+      - {max: 250,  label: "100-250"}
+      - {max: null, label: "250-plus"}
+  custom_label_1:   # product line
+    type: map
+    field: product_type
+    map:
+      Treatment: "bio-control-active"
+      Prevention: "bio-control-preventative"
+      Mite Care: "bio-control-active"
+      Springtails: "bio-control-cleanup"
+      Soil Amendments: "soil"
+      Plant Care: "plant-care"
+      Gift Card: "giftcard"
+      FGMN Originals: "originals"
+    default_by_category: {"Potted Houseplants": "rare-plants"}
+    default: "other"
+  custom_label_2:   # stock posture — drives bid throttling
+    type: computed
+    expr: stock_posture      # deep|healthy|low|oversold|backorder
+  custom_label_3:   # primary pest targeted — mirrors ad group structure
+    type: field
+    field: primary_pest_slug
+    default: "no-pest"
+  custom_label_4:   # margin/seasonality band, supplied out of band
+    type: lookup
+    file: "config/margin_bands.csv"
+    key: sku
+    column: band
+    default: "unclassified"
+
+# ---------------------------------------------------------------------------
+# 6. STOCK POSTURE — one honest definition of availability, used everywhere.
+#    127 variants currently carry negative inventory while still marked
+#    available for sale. That is a real oversell exposure and it also makes the
+#    feed lie to Google. This encodes the policy explicitly.
+# ---------------------------------------------------------------------------
+availability:
+  # Live organisms are produced to order, so continue-selling is legitimate.
+  # But we tell channels the truth about lead time instead of claiming in_stock.
+  oversold_threshold: 0
+  low_stock_threshold: 25
+  deep_stock_threshold: 500
+  policy:
+    - {when: "not available_for_sale",           status: out_of_stock, posture: oversold}
+    - {when: "qty <= 0 and continue_selling",    status: backorder,    posture: backorder,
+       handling_days: 5,
+       note: "Produced to order — negative inventory means committed units exceed on-hand."}
+    - {when: "qty <= low_stock_threshold",       status: in_stock,     posture: low}
+    - {when: "qty >= deep_stock_threshold",      status: in_stock,     posture: deep}
+    - {when: "always",                           status: in_stock,     posture: healthy}
+
+# ---------------------------------------------------------------------------
+# 7. IDENTIFIERS
+# ---------------------------------------------------------------------------
+identifiers:
+  # 454 of 688 variants have no barcode. Live organisms and one-off specimen
+  # plants genuinely have no manufacturer GTIN — declare that rather than
+  # letting Google infer a missing-identifier error.
+  gtin_from: barcode
+  mpn_from: sku
+  identifier_exists_no_when: {gtin_empty: true, mpn_empty: true}
+
+# ---------------------------------------------------------------------------
+# 8. SHIPPING
+#    172 variants have zero weight, which breaks calculated shipping. Weights
+#    are estimated by product line until the real ones are entered in Shopify.
+# ---------------------------------------------------------------------------
+shipping:
+  country: US
+  flat_rate: null            # null = let Merchant Center account settings apply
+  free_shipping_threshold: null
+  min_handling_days: 1
+  max_handling_days: 3
+  min_transit_days: 1
+  max_transit_days: 4
+  weight_fallbacks_lb:       # applied only when Shopify weight is 0/absent
+    Treatment: 0.5
+    Prevention: 0.5
+    "Mite Care": 0.5
+    Springtails: 0.5
+    "Soil Amendments": 2.0
+    "Plant Care": 1.5
+    default: 1.0
+    potted_plant: 4.0
+
+# ---------------------------------------------------------------------------
+# 9. CHANNEL SETTINGS
+# ---------------------------------------------------------------------------
+channels:
+  google:
+    enabled: true
+    format: rss_xml
+    title_max: 150
+    description_max: 5000
+    id_max: 50
+    availability_map: {in_stock: in_stock, out_of_stock: out_of_stock, preorder: preorder, backorder: backorder}
+    include_question_and_answer: true
+    include_product_detail: true
+    include_product_highlight: true
+    include_short_title: true
+  openai:
+    enabled: true
+    format: tsv
+    title_max: 150
+    description_max: 5000
+    id_max: 100
+    availability_map: {in_stock: in_stock, out_of_stock: out_of_stock, preorder: pre_order, backorder: backorder}
+    is_eligible_search: true
+    is_eligible_checkout: false     # flip on once Instant Checkout is approved
+    is_ads_eligible: true
+    include_q_and_a: true
+    include_reviews: true
+  microsoft:
+    enabled: true
+    format: rss_xml
+    title_max: 150
+    description_max: 10000
+    id_max: 50
+    # Microsoft uses SPACES in the availability enum — the single most common
+    # cause of a Google-format feed silently failing on Bing.
+    availability_map: {in_stock: "in stock", out_of_stock: "out of stock", preorder: "preorder", backorder: "in stock"}
+    set_expiration_date_days: 29    # MMC silently expires products after 30 days
+    channel_value: "Online"
+  pinterest:
+    enabled: true
+    format: csv
+    title_max: 500
+    description_max: 10000
+    id_max: 127
+    availability_map: {in_stock: "in stock", out_of_stock: "out of stock", preorder: "preorder", backorder: "out of stock"}
+    include_average_review_rating: true
