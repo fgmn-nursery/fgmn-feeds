@@ -1,0 +1,8 @@
+raw/
+out/
+site/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Margin bands are commercially sensitive - supplied via the MARGIN_BANDS_CSV secret.
+config/margin_bands.csv
