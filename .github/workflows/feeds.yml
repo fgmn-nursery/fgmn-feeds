@@ -1,0 +1,128 @@
+name: Build and publish product feeds
+
+on:
+  schedule:
+    # Every 3 hours. Google fetches on its own schedule, OpenAI expires products
+    # 14 days after their last update, and Microsoft expires them after 30 —
+    # 3h satisfies all three with a wide margin and keeps price/stock drift small.
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "config/**"      # a rules change should publish immediately
+      - "src/**"
+      - ".github/workflows/**"
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml pytest
+
+      # Margin bands are commercially sensitive, so they live in a secret rather
+      # than in the repo. Absent, custom_label_4 falls back to "unclassified".
+      - name: Materialise margin bands
+        if: ${{ secrets.MARGIN_BANDS_CSV != '' }}
+        run: printf '%s' "${{ secrets.MARGIN_BANDS_CSV }}" > config/margin_bands.csv
+
+      - name: Extract catalog from Shopify
+        env:
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          MIN_EXPECTED_PRODUCTS: "100"
+        run: python3 src/extract.py
+
+      - name: Rules regression tests
+        run: python3 -m pytest tests/ -q
+
+      - name: Build all feeds
+        run: |
+          python3 src/generate.py --strict
+          python3 src/generate.py --segment beneficials --strict
+
+      # Publishing a feed that lost a third of its catalog is worse than
+      # publishing nothing — channels delist whatever disappears.
+      - name: Guard against catalog collapse
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          floors = {"run_report.json": 300, "run_report_beneficials.json": 150}
+          bad = False
+          for f, floor in floors.items():
+              n = json.load(open(f"out/{f}"))["channels"]["google"]["offers"]
+              print(f"{f}: {n} offers (floor {floor})")
+              if n < floor:
+                  print(f"::error::{f} has only {n} offers, expected >= {floor}")
+                  bad = True
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Build the Pages site
+        run: python3 src/publish.py
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-output
+          path: |
+            out/*.xml
+            out/*.tsv
+            out/*.csv
+            out/*.json
+          retention-days: 14
+
+      - name: Summarise the run
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          print("## Feed build\n")
+          for f in ("run_report.json", "run_report_beneficials.json"):
+              p = f"out/{f}"
+              if not os.path.exists(p):
+                  continue
+              r = json.load(open(p))
+              print(f"### Segment: `{r['segment']}`\n")
+              print("| channel | offers | dropped | errors | warnings |")
+              print("|---|---|---|---|---|")
+              for name, c in r["channels"].items():
+                  v = c["validation"]
+                  print(f"| {name} | {c['offers']} | {c['dropped']} | {v['errors']} | {v['warnings']} |")
+              print()
+          r = json.load(open("out/run_report.json"))
+          print("### Data-quality warnings to work through\n")
+          for code, n in r["channels"]["google"]["validation"]["by_code"].items():
+              print(f"- `{code}`: {n}")
+          PY
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
