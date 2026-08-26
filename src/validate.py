@@ -35,7 +35,7 @@ def _is_affirmative(text: str, match: re.Match) -> bool:
     before = re.findall(r"[a-zA-Z-]+", text[max(0, match.start() - 60):match.start()])[-4:]
     # Strip a leading hyphen so "pesticide-free" reads as the word "free".
     after = [w.lstrip("-") for w in
-             re.findall(r,[a-zA-Z-]+", text[match.end():match.end() + 30])[:2]]
+             re.findall(r"[a-zA-Z-]+", text[match.end():match.end() + 30])[:2]]
     if any(w.lower() in _NEGATORS for w in before):
         return False
     if after and after[0].lower() in {"free", "use", "reduction", "compatibility"}:
