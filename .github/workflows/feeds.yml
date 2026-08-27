@@ -51,7 +51,9 @@ jobs:
 
       - name: Extract catalog from Shopify
         env:
-          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
+          # Not a secret - the .myshopify.com domain is public. Kept overridable
+          # so a staging store can be pointed at without editing the workflow.
+          SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE || '8a2744-3d.myshopify.com' }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
           MIN_EXPECTED_PRODUCTS: "100"
