@@ -39,8 +39,15 @@ jobs:
       # Margin bands are commercially sensitive, so they live in a secret rather
       # than in the repo. Absent, custom_label_4 falls back to "unclassified".
       - name: Materialise margin bands
-        if: ${{ secrets.MARGIN_BANDS_CSV != '' }}
-        run: printf '%s' "${{ secrets.MARGIN_BANDS_CSV }}" > config/margin_bands.csv
+        env:
+          MARGIN_BANDS_CSV: ${{ secrets.MARGIN_BANDS_CSV }}
+        run: |
+          if [ -n "$MARGIN_BANDS_CSV" ]; then
+            printf '%s' "$MARGIN_BANDS_CSV" > config/margin_bands.csv
+            echo "margin bands loaded: $(wc -l < config/margin_bands.csv) lines"
+          else
+            echo "no MARGIN_BANDS_CSV secret set - custom_label_4 will read 'unclassified'"
+          fi
 
       - name: Extract catalog from Shopify
         env:
