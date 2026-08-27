@@ -44,7 +44,8 @@ undocumented click in a SaaS admin panel.
 pip install pyyaml pytest
 
 export SHOPIFY_STORE=8a2744-3d.myshopify.com
-export SHOPIFY_TOKEN=shpat_…            # custom app: read_products, read_inventory
+export SHOPIFY_CLIENT_ID=…              # Dev Dashboard → FGMN Feeds → Settings
+export SHOPIFY_CLIENT_SECRET=…
 
 python3 src/extract.py                  # → raw/catalog.json
 python3 -m pytest tests/ -q             # rules regression suite
@@ -113,10 +114,24 @@ and the last build time — the fastest way to confirm a run actually worked.
 Required secrets:
 
 ```
-SHOPIFY_STORE       e.g. 8a2744-3d.myshopify.com
-SHOPIFY_TOKEN       custom app token: read_products, read_inventory
-MARGIN_BANDS_CSV    optional — the contents of a sku,band CSV
+SHOPIFY_STORE          e.g. 8a2744-3d.myshopify.com
+SHOPIFY_CLIENT_ID      Dev Dashboard → FGMN Feeds → Settings → Credentials
+SHOPIFY_CLIENT_SECRET  same page
+MARGIN_BANDS_CSV       optional — the contents of a sku,band CSV
 ```
+
+### Authentication
+
+Shopify retired admin-created custom apps, so there is no long-lived `shpat_`
+token to store. Instead the app is created in the **Dev Dashboard**, released with
+`read_products,read_inventory`, and installed on the store; each build then
+exchanges the client ID and secret for a token that expires in 24 hours
+(the **client credentials grant**). This works because the app and the store sit in
+the same Shopify organisation.
+
+The practical upshot: nothing long-lived is stored, and a leaked build log is
+worth at most a day of read-only product access. Rotating the secret in the Dev
+Dashboard invalidates everything immediately.
 
 Margin data never enters the repo. `config/margin_bands.csv` is gitignored and written
 at build time from `MARGIN_BANDS_CSV`, so the repo can be public (which is what makes
