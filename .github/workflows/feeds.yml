@@ -52,7 +52,8 @@ jobs:
       - name: Extract catalog from Shopify
         env:
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
-          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
           MIN_EXPECTED_PRODUCTS: "100"
         run: python3 src/extract.py
 
