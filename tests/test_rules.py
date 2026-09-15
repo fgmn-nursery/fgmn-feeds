@@ -194,6 +194,67 @@ def test_risk_term_detection_ignores_negated_usage(text, flagged):
     assert bool(hits) is flagged
 
 
+# --------------------------------------------------------------------------- #
+# shared marketing assets must never reach a feed as product imagery
+# --------------------------------------------------------------------------- #
+
+def _media(*pairs):
+    return {"media": {"nodes": [{"image": {"url": u, "altText": a}}
+                                for u, a in pairs]}}
+
+
+def test_image_reused_across_products_is_treated_as_shared(rules):
+    from transform import Transformer
+    t = Transformer(rules)
+    ldg = "https://cdn/files/IMG-6503.jpg?v=1"
+    products = [
+        {"id": f"gid://p/{i}", **_media((f"https://cdn/files/p{i}.png", "the product"),
+                                        (ldg, "The FGMN Nursery live delivery guarantee"))}
+        for i in range(3)
+    ]
+    shared = t.shared_assets(products)
+    assert "https://cdn/files/IMG-6503.jpg" in shared
+    assert "https://cdn/files/p0.png" not in shared
+    assert t.product_images(products[0], shared) == ["https://cdn/files/p0.png"]
+
+
+def test_cache_buster_does_not_defeat_shared_detection(rules):
+    from transform import Transformer
+    t = Transformer(rules)
+    products = [
+        {"id": f"gid://p/{i}", **_media((f"https://cdn/files/p{i}.png", "x"),
+                                        (f"https://cdn/files/IMG-6503.jpg?v={i}", "y"))}
+        for i in range(3)
+    ]
+    assert "https://cdn/files/IMG-6503.jpg" in t.shared_assets(products)
+
+
+def test_two_siblings_may_share_a_photo(rules):
+    from transform import Transformer
+    t = Transformer(rules)
+    shot = "https://cdn/files/nematodes.png"
+    products = [{"id": f"gid://p/{i}", **_media((shot, "nematode bag"))}
+                for i in range(2)]
+    assert t.shared_assets(products) == set()
+
+
+def test_alt_text_pattern_drops_a_one_off_marketing_card(rules):
+    from transform import Transformer
+    t = Transformer(rules)
+    p = {"id": "gid://p/1", **_media(
+        ("https://cdn/files/real.png", "Kraft tube of predatory mites"),
+        ("https://cdn/files/card.png", "The FGMN Nursery live delivery guarantee "))}
+    assert t.product_images(p, set()) == ["https://cdn/files/real.png"]
+
+
+def test_a_product_is_never_left_with_no_image(rules):
+    from transform import Transformer
+    t = Transformer(rules)
+    p = {"id": "gid://p/1", **_media(
+        ("https://cdn/files/only.png", "The FGMN Nursery live delivery guarantee"))}
+    assert t.product_images(p, set()) == ["https://cdn/files/only.png"]
+
+
 def test_generated_feed_has_zero_blocking_errors(rules, offers):
     errors = [f for f in validate_offers(offers, rules["channels"]["google"])
               if f.severity == "error"]
