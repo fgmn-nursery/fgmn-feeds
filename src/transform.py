@@ -372,23 +372,70 @@ class Transformer:
                 return True
         return False
 
+    @staticmethod
+    def _asset_key(url: str) -> str:
+        """Identity of an image ignoring Shopify's ?v= cache-buster."""
+        return url.split("?")[0]
+
+    def shared_assets(self, products: list[dict]) -> set[str]:
+        """Image keys that appear on several different products.
+
+        A real product photo belongs to one product. An image reused across the
+        catalog is a marketing card - the Live Delivery Guarantee, an explainer
+        diagram - and must not be fed to a shopping channel as product imagery.
+        Counted over the whole catalog, not the segment, so a segment feed sees
+        the same answer as the full feed.
+        """
+        cfg = self.r.get("images") or {}
+        threshold = cfg.get("shared_asset_min_products", 0)
+        if not threshold:
+            return set()
+        seen: dict[str, set[str]] = {}
+        for p in products:
+            pid = p.get("id") or p.get("handle") or ""
+            for n in p.get("media", {}).get("nodes", []):
+                url = (n.get("image") or {}).get("url")
+                if url:
+                    seen.setdefault(self._asset_key(url), set()).add(pid)
+        return {k for k, owners in seen.items() if len(owners) >= threshold}
+
+    def product_images(self, p: dict, shared: set[str]) -> list[str]:
+        """Media URLs for a product, minus shared marketing assets."""
+        cfg = self.r.get("images") or {}
+        patterns = [s.lower() for s in cfg.get("exclude_alt_patterns", [])]
+        raw, kept = [], []
+        for n in p.get("media", {}).get("nodes", []):
+            img = n.get("image") or {}
+            url = img.get("url")
+            if not url:
+                continue
+            raw.append(url)
+            alt = (img.get("altText") or "").lower()
+            if self._asset_key(url) in shared:
+                continue
+            if any(pat in alt for pat in patterns):
+                continue
+            kept.append(url)
+        # A row with no image is rejected outright, which is worse than a
+        # mediocre image - so never strip a product down to nothing.
+        if not kept and raw and cfg.get("keep_first_if_all_excluded", True):
+            return raw[:1]
+        return kept
+
     def build(self, products: list[dict], channel: str = "google",
               segment: str = "all") -> list[Offer]:
         offers: list[Offer] = []
         store = self.r["store"]
         brand = store["brand"]
         common = self.r["titles"]["common_names"]
+        shared = self.shared_assets(products)
 
         for p in products:
             if not self.in_segment(p, segment):
                 continue
             mf = metafields(p)
             cat_id, cat_path, cat_src = self.category(p)
-            images = [
-                n["image"]["url"]
-                for n in p.get("media", {}).get("nodes", [])
-                if n.get("image", {}).get("url")
-            ]
+            images = self.product_images(p, shared)
             desc_base = plain_text(p.get("descriptionHtml"))
             qa = extract_qa(mf)
 
