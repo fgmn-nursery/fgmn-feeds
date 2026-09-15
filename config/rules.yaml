@@ -269,6 +269,35 @@ availability:
 # ---------------------------------------------------------------------------
 # 7. IDENTIFIERS
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 7a. IMAGES
+#     The storefront reuses a few marketing cards across the whole catalog -
+#     the Live Delivery Guarantee card, the slow-release sachet explainer, the
+#     prevention-vs-treatment diagram. They belong on a product page and do not
+#     belong in a feed: a channel that picks one shows a shopper a wall of text
+#     instead of the thing they are buying.
+#
+#     Rather than maintain a blocklist of filenames, detect them structurally:
+#     a real product photo belongs to one product, so an image used on several
+#     different products is by definition a shared asset. Alt-text patterns are
+#     a second net for one-offs that fall under the threshold.
+# ---------------------------------------------------------------------------
+images:
+  # An image appearing on this many DISTINCT products is treated as shared.
+  # 3 is deliberately conservative: sibling products (Sc/Hb/Sf nematodes) can
+  # legitimately share a photo across 2. Measured on the live catalog, nothing
+  # sits at 2 - the gap between a product photo and a marketing card is clean.
+  shared_asset_min_products: 3
+  exclude_alt_patterns:
+    - "live delivery guarantee"
+    - "you won't see them"
+    - "text overlay"
+    - "diagram:"
+    - "illustration headed"
+  # Never strip a product down to no image at all - a feed row without an
+  # image is rejected outright, which is worse than a mediocre image.
+  keep_first_if_all_excluded: true
+
 identifiers:
   # 454 of 688 variants have no barcode. Live organisms and one-off specimen
   # plants genuinely have no manufacturer GTIN — declare that rather than
